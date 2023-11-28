@@ -1,0 +1,14 @@
+Questions for team:
+
+1. When messages pass the rule-based filter, do we want to let them immediately pass into the next ECU or go into a 'waiting room'?
+	- Assuming messages come in 1 at a time based on timestamp
+	- The ML model is not perfect and makes better decisions with more data in regards to detecting an attack or not (better or worse depending on type of attack)
+	- How many messages to gather before indicating an attack is happening?
+	- If yes, how many messages to gather before passing? How to make this not impact throughput?
+	- If no, do we tell an ECU to ignore messages that have already passed? How best to track?
+Idea: Look back at last 50-100(?) messages and evaluate on each message coming in if there is a trend toward attack
+    - 1. Add a queue where there are always N number of messages in the queue?
+    - 2. Automatically block messages when an attack is detected? will result in ~5% good messages getting blocked
+    - 3. Let messages through until an attack is detected? Some attack messages will get through
+
+2. Do we want to store model on each ECU? If so, need to look into compression, currently ~500MB
