@@ -1,12 +1,10 @@
-import can
-import time
-import threading
-import xgboost
-import pickle
-import sklearn
 import logging
+import pickle
+from collections import Counter
+
+import can
 import pandas as pd
-import matplotlib.pyplot as plt
+from matplotlib import pyplot as plt
 
 import ads_helpers
 
@@ -26,7 +24,14 @@ message_logger.addHandler(message_logger_handler)
 event_logger = logging.getLogger('event_logger')
 event_logger.setLevel(logging.INFO)
 event_logger_handler = logging.FileHandler('event_log.log')
-event_logger.addHandler(message_logger_handler)
+event_logger.addHandler(message_logger_handler)\
+
+
+Message_Invalid_Count = 0
+Message_Frequency_Count = 0
+Message_Sequence_Count = 0
+Message_TimeInterval_Count = 0
+SAMPLE_SIZE = 10000
 # Load the model
 with open('ads_model.pkl', 'rb') as file:
     ads_model = pickle.load(file)
@@ -40,6 +45,11 @@ dataset_filenames = {'attack_free': 'Attack_free_dataset.txt',
                      'dos_attack': 'DoS_attack_dataset.txt',
                      'fuzzy_attack': 'Fuzzy_attack_dataset.txt',
                      'impersonation_attack': 'Impersonation_attack_dataset.txt'}
+# for dataset in dataset_filenames:
+dataset = 'dos_attack'
+test_df = ads_helpers.txt_to_df(dataset_filenames, data_dir, dataset)
+test_df = ads_helpers.encode_labels(test_df, label_lst=['ID', 'Data'])
+pred = ads_model.predict(test_df)
 
 data_dfs = {}
 for dset in dataset_filenames:
@@ -73,7 +83,7 @@ def msg_to_df(message):
         'Data': []
     }
 
-    data['Timestamp'].append(message.timestamp)
+    data['Timestamp'].append(float(message.timestamp))
     data['ID'].append(hex(message.arbitration_id))
     data['DLC'].append(message.dlc)
     data['Data'].append(message.data.hex())  # Convert data bytes to hexadecimal string
@@ -84,19 +94,22 @@ def msg_to_df(message):
 bus1 = can.interface.Bus('CAN0', interface='virtual')
 bus2 = can.interface.Bus('CAN0',
                          interface='virtual')
-CAN_messages_total =[]
+CAN_messages_total = []
+backup_non_can_buffer = []
+CAN_secondary_buffer = []
 valid_ids = []  # Define valid IDs
-
 for ID in data_dfs['attack_free_df']['ID']:
     valid_ids.append(ID)
+
 
 # Function to filter messages by valid IDs
 def filter_valid_messages(df):
     valid_messages = df[df['ID'].isin(valid_ids)]
 
     return pd.DataFrame(valid_messages)
-# Gateway ECU with ML and Rule-based Filter
 
+
+# Gateway ECU with ML and Rule-based Filter
 
 
 def gateway_ecu():
@@ -114,16 +127,57 @@ def gateway_ecu():
             message_logger.info(f"Gateway received: {message}")
 
     CAN_messages_total.append(internal_message_buffer)
-    print("Gateway has received all pending messages\nInternal Message buffer size: " + str(len(internal_message_buffer)))
-    message_buffer = pd.concat(internal_message_buffer,ignore_index=True)
+    print(
+        "Gateway has received all pending messages\nInternal Message buffer size: " + str(len(internal_message_buffer)))
+    message_buffer = pd.concat(internal_message_buffer, ignore_index=True)
+    #CAN_secondary_buffer = pd.concat(backup_non_can_buffer, ignore_index=True)
     # Rule 1: Valid ID
     Validated_Messages = filter_valid_messages(message_buffer)
+    Validated_Messages_Backup = filter_valid_messages(blind_sample_set)
     # Convert message buffer IDs from strings to integers
     # Padding the valid_ids list with leading zeros
-    #valid_ids_padded = [id_str.zfill(3) for id_str in valid_ids]
-    print("Gateway removed " + str(len(message_buffer)- len(Validated_Messages) ) + " messages")
-    message_logger.info("Gateway removed " + str(len(message_buffer)- len(Validated_Messages) ) + " messages")
+    # valid_ids_padded = [id_str.zfill(3) for id_str in valid_ids]
+    Message_Invalid_Count = SAMPLE_SIZE-len(Validated_Messages)
 
+    #Rule 2: Valid frequency
+
+    random_frequency_messages = Validated_Messages['ID'].sample(n=3, random_state=42)
+    # Filter the DataFrame for these 3 random IDs
+    selected_messages = Validated_Messages[Validated_Messages['ID'].isin(random_frequency_messages)]    # Calculate time differences between consecutive timestamps for each message
+    # Calculate average frequency for each message
+    message_frequency = selected_messages.groupby('ID')['Timestamp'].agg(
+        lambda x: 1 / (x.max() - x.min())).reset_index()
+    message_frequency.columns = ['ID', 'Frequency']
+    # Calculate average frequency in milliseconds
+
+    # Check for messages with average frequency more than 20% above 10ms (12ms)
+    invalid_messages = message_frequency[message_frequency['Frequency'] > 1 / (10 * 0.8)]
+    Message_Frequency_Count = Validated_Messages[Validated_Messages['ID'].isin(invalid_messages['ID'])].shape[0]
+    Encoded_Messages = ads_helpers.encode_labels(Validated_Messages_Backup, label_lst=['ID', 'Data'])
+    predictions = ads_model.predict(Encoded_Messages)
+    ECU_predictions = Counter(predictions)
+
+    # Plotting
+    categories = ['Valid Messages', 'Invalid Messages']
+    counts = [ECU_predictions[0], ECU_predictions[1]]
+
+    plt.figure(figsize=(8, 6))
+    plt.bar(categories, counts, color=['blue', 'green', 'red'])
+    plt.xlabel('Message Types')
+    plt.ylabel('Counts')
+    plt.title('Counts of CAN Messages')
+    plt.savefig('CAN_messages_overall_result.png')
+
+    # Plotting
+    categories = ['Invalid ID', 'Invalid Frequency', 'Invalid Sequence', 'ML-based']
+    counts = [Message_Invalid_Count, Message_Frequency_Count,Message_Sequence_Count,ECU_predictions[1]]
+
+    plt.figure(figsize=(8, 6))
+    plt.bar(categories, counts, color=['blue', 'green', 'red','orange'])
+    plt.xlabel('Message Types')
+    plt.ylabel('Counts')
+    plt.title('Counts of CAN Messages')
+    plt.savefig('InvalidMessageBreakdown.png')
     # # Further processing for valid messages
     # valid_df = df_buffered_data[df_buffered_data['ID'].isin(valid_ids)]
     # print(f"Valid Messages:\n {valid_df}")
@@ -135,9 +189,10 @@ def gateway_ecu():
 # Convert DataFrame into CAN messages
 messages = []
 
-data_df = data_df.sample(n=10000)
+sample_set = data_df.sample(n=SAMPLE_SIZE)
 
-for index, row in data_df.iterrows():
+blind_sample_set = sample_set.drop('Attack',axis=1)
+for index, row in blind_sample_set.iterrows():
     message = dataframe_to_can(row)
     messages.append(message)
 
@@ -149,5 +204,6 @@ gateway_ecu()
 bus1.shutdown()
 bus2.shutdown()
 CAN_messages_total = CAN_messages_total[0]
-CAN_messages_total = pd.concat(CAN_messages_total,ignore_index=True)
-# Plotting
+CAN_messages_total = pd.concat(CAN_messages_total, ignore_index=True)
+
+
