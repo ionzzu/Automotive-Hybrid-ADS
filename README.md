@@ -2,7 +2,7 @@
 
 Shared repository for working on Purdue-ECE547-Project (Hybrid Anomaly Detection System to Prevent Malicious Attacks on Automotive CAN Networks)
 
-## Requirements
+## Base Environment Requirements
 
 - Python 3.10.2 or higher
 
