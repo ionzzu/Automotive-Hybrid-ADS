@@ -1,6 +1,11 @@
 # Hybrid ADS in Automotive CAN Networks
 
-Shared repository for working on Purdue-ECE547-Project (Hybrid Anomaly Detection System to Prevent Malicious Attacks on Automotive CAN Networks)
+Shared repository for Purdue-ECE547-Project (Hybrid Anomaly Detection System to Prevent Malicious Attacks on Automotive CAN Networks)
+
+## Authors
+- [Jonathan Cochran](https://github.com/ionzzu)
+- [John Mushatt](https://github.com/JohnMushatt)
+- Logan Coles
 
 ## Base Environment Requirements
 
@@ -16,11 +21,11 @@ Shared repository for working on Purdue-ECE547-Project (Hybrid Anomaly Detection
 
 ## Fair Use Disclaimer
 
-This project contains the CAN Dataset for intrusion detection (OTIDS)
+This project contains the CAN Dataset for intrusion detection (OTIDS) under test_datasets
 
 ### Fair Use Criteria
 
-The use of OTIDS in this project is made in good faith for academic purposes
+The use of OTIDS in this project is for academic purposes
 
 ### Acknowledgment
 
