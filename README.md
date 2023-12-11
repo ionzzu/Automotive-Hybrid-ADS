@@ -7,6 +7,12 @@ Shared repository for Purdue-ECE547-Project (Hybrid Anomaly Detection System to 
 - [John Mushatt](https://github.com/JohnMushatt)
 - Logan Coles
 
+## Description
+
+The objective of this project is to simulate a hybrid anomaly detection system (ADS) in a vehicle environment
+- Hybrid ADS combines a machine learning filter and a rule-based filter
+- Vehicle environment messages simulated with Python-can
+
 ## Base Environment Requirements
 
 - Python 3.10.2 or higher
