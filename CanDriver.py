@@ -24,8 +24,7 @@ message_logger.addHandler(message_logger_handler)
 event_logger = logging.getLogger('event_logger')
 event_logger.setLevel(logging.INFO)
 event_logger_handler = logging.FileHandler('event_log.log')
-event_logger.addHandler(message_logger_handler)\
-
+event_logger.addHandler(message_logger_handler)
 
 Message_Invalid_Count = 0
 Message_Frequency_Count = 0
@@ -108,10 +107,22 @@ def filter_valid_messages(df):
 
     return pd.DataFrame(valid_messages)
 
+def filter_messages_from_base(base,filter):
+    valid_messages = base[~base['ID'].isin(filter)]
+
+    return pd.DataFrame(valid_messages)
+
 
 # Gateway ECU with ML and Rule-based Filter
 
+# Function to convert hexadecimal string to bytes
+def hex_to_bytes(hex_str):
+    # Split the hexadecimal string into pairs of bytes
+    byte_list = [hex_str[i:i + 2] for i in range(0, len(hex_str), 2)]
 
+    # Join the bytes with spaces to create a string
+    bytes_string = ' '.join(byte_list)
+    return bytes_string
 def gateway_ecu():
     internal_message_buffer = []
     bus_active = True
@@ -130,20 +141,21 @@ def gateway_ecu():
     print(
         "Gateway has received all pending messages\nInternal Message buffer size: " + str(len(internal_message_buffer)))
     message_buffer = pd.concat(internal_message_buffer, ignore_index=True)
-    #CAN_secondary_buffer = pd.concat(backup_non_can_buffer, ignore_index=True)
+    # CAN_secondary_buffer = pd.concat(backup_non_can_buffer, ignore_index=True)
     # Rule 1: Valid ID
     Validated_Messages = filter_valid_messages(message_buffer)
     Validated_Messages_Backup = filter_valid_messages(blind_sample_set)
     # Convert message buffer IDs from strings to integers
     # Padding the valid_ids list with leading zeros
     # valid_ids_padded = [id_str.zfill(3) for id_str in valid_ids]
-    Message_Invalid_Count = SAMPLE_SIZE-len(Validated_Messages)
+    Message_Invalid_Count = SAMPLE_SIZE - len(Validated_Messages)
 
-    #Rule 2: Valid frequency
+    # Rule 2: Valid frequency
 
     random_frequency_messages = Validated_Messages['ID'].sample(n=3, random_state=42)
     # Filter the DataFrame for these 3 random IDs
-    selected_messages = Validated_Messages[Validated_Messages['ID'].isin(random_frequency_messages)]    # Calculate time differences between consecutive timestamps for each message
+    selected_messages = Validated_Messages[Validated_Messages['ID'].isin(
+        random_frequency_messages)]  # Calculate time differences between consecutive timestamps for each message
     # Calculate average frequency for each message
     message_frequency = selected_messages.groupby('ID')['Timestamp'].agg(
         lambda x: 1 / (x.max() - x.min())).reset_index()
@@ -152,7 +164,23 @@ def gateway_ecu():
 
     # Check for messages with average frequency more than 20% above 10ms (12ms)
     invalid_messages = message_frequency[message_frequency['Frequency'] > 1 / (10 * 0.8)]
+    Validated_Messages = filter_messages_from_base(Validated_Messages,invalid_messages)
     Message_Frequency_Count = Validated_Messages[Validated_Messages['ID'].isin(invalid_messages['ID'])].shape[0]
+
+    # Rule 3: Sequence Rule
+    sequence_ids = Validated_Messages.sample(3, random_state=42)
+    sequence_messages = Validated_Messages[Validated_Messages['ID'].isin(sequence_ids)]
+
+    invalid_ids = []
+    for index, row in selected_messages.iterrows():
+        if index + 1 < len(selected_messages) and selected_messages.iloc[index + 1]['ID'] not in sequence_ids:
+            invalid_ids.append(row['ID'])
+        elif index + 2 < len(selected_messages) and selected_messages.iloc[index + 2]['ID'] not in sequence_ids:
+            invalid_ids.append(row['ID'])
+
+    Validated_Messages = filter_messages_from_base(Validated_Messages,invalid_ids)
+    Validated_Messages['Data'] = Validated_Messages['Data'].apply(hex_to_bytes)
+    Message_Sequence_Count = len(invalid_ids)
     Encoded_Messages = ads_helpers.encode_labels(Validated_Messages_Backup, label_lst=['ID', 'Data'])
     predictions = ads_model.predict(Encoded_Messages)
     ECU_predictions = Counter(predictions)
@@ -169,29 +197,52 @@ def gateway_ecu():
     plt.savefig('CAN_messages_overall_result.png')
 
     # Plotting
-    categories = ['Invalid ID', 'Invalid Frequency', 'Invalid Sequence', 'ML-based']
-    counts = [Message_Invalid_Count, Message_Frequency_Count,Message_Sequence_Count,ECU_predictions[1]]
+    categories = ['Invalid ID', 'Invalid Frequency', 'Invalid Sequence']
+    counts = [Message_Invalid_Count, Message_Frequency_Count, Message_Sequence_Count]
 
     plt.figure(figsize=(8, 6))
-    plt.bar(categories, counts, color=['blue', 'green', 'red','orange'])
+    plt.bar(categories, counts, color=['blue', 'green', 'red', 'orange'])
     plt.xlabel('Message Types')
     plt.ylabel('Counts')
     plt.title('Counts of CAN Messages')
     plt.savefig('InvalidMessageBreakdown.png')
-    # # Further processing for valid messages
-    # valid_df = df_buffered_data[df_buffered_data['ID'].isin(valid_ids)]
-    # print(f"Valid Messages:\n {valid_df}")
-    # # Isolate time domain violating messages
-    # # Assuming 'Timestamp' is the name of the column containing timestamps
-    # valid_df['Timestamp'] = pd.to_numeric(valid_df['Timestamp'])  # Convert column to numeric if needed
+    Rule_count = Message_Invalid_Count + Message_Frequency_Count + Message_Sequence_Count
+    ML_count = ECU_predictions[1]
+    # Plotting
+    categories = ['Rule-Based', 'ML-Based']
+    counts = [Rule_count, ML_count]
 
+    plt.figure(figsize=(8, 6))
+    plt.bar(categories, counts, color=['blue', 'green', 'red', 'orange'])
+    plt.xlabel('Message Types')
+    plt.ylabel('Counts')
+    plt.title('Rule-based vs ML-Based Detection')
+    plt.savefig('Rule_ML_Comparison.png')
+
+    # Create a figure and axis
+    fig, ax = plt.subplots()
+    stats = {
+        'Elements' : ['Rule-Based %', 'ML-Based %'],
+        'Values' : [Rule_count/INVALID_MESSAGE_COUNT, ML_count/INVALID_MESSAGE_COUNT]
+    }
+    # Create a table
+    table = ax.table(cellText=[stats['Values']], colLabels=stats['Elements'], loc='center')
+
+    # Hide axis
+    ax.axis('off')
+
+    # Display the table
+    plt.savefig('NetworkStats.png')
 
 # Convert DataFrame into CAN messages
 messages = []
 
 sample_set = data_df.sample(n=SAMPLE_SIZE)
 
-blind_sample_set = sample_set.drop('Attack',axis=1)
+VALID_MESSAGE_COUNT = len(sample_set[sample_set['Attack'] == 0])
+INVALID_MESSAGE_COUNT = len(sample_set[sample_set['Attack'] == 1])
+
+blind_sample_set = sample_set.drop('Attack', axis=1)
 for index, row in blind_sample_set.iterrows():
     message = dataframe_to_can(row)
     messages.append(message)
@@ -205,5 +256,3 @@ bus1.shutdown()
 bus2.shutdown()
 CAN_messages_total = CAN_messages_total[0]
 CAN_messages_total = pd.concat(CAN_messages_total, ignore_index=True)
-
-
