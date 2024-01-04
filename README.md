@@ -13,6 +13,10 @@ The objective of this project is to simulate a hybrid anomaly detection system (
 - Hybrid ADS combines a machine learning filter and a rule-based filter
 - Vehicle environment messages simulated with Python-can
 
+## Results
+
+Hybrid ADS blocked 85% of network attacks (See [project report](docs/ECE547_FinalProject.pdf))
+
 ## Base Environment Requirements
 
 - Python 3.10.2 or higher
